@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSerial Arduino Seri Monitör</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 20px;
+            background-color: #f4f4f9;
+            color: #333;
+        }
+        h2 { color: #0078d4; }
+        .controls {
+            margin-bottom: 15px;
+            padding: 10px;
+            background: #fff;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        label, select, button, input {
+            font-size: 14px;
+            margin-right: 10px;
+            padding: 6px 12px;
+        }
+        button {
+            background-color: #0078d4;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover { background-color: #005a9e; }
+        button:disabled { background-color: #cccccc; cursor: not-allowed; }
+        #disconnectBtn { background-color: #d83b01; }
+        #disconnectBtn:hover { background-color: #b83201; }
+        .terminal-container {
+            position: relative;
+        }
+        #output {
+            width: 100%;
+            height: 350px;
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+            font-family: 'Courier New', Courier, monospace;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-y: scroll;
+            box-sizing: border-box;
+            white-space: pre-wrap;
+        }
+        .send-box {
+            margin-top: 10px;
+            display: flex;
+        }
+        #inputText {
+            flex-grow: 1;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        #clearBtn {
+            position: absolute;
+            top: 10px;
+            right: 25px;
+            background-color: #555;
+            padding: 4px 8px;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>🔌 WebSerial Arduino Seri Monitör</h2>
+    
+    <div class="controls">
+        <label for="baudrate">Baud Rate:</label>
+        <select id="baudrate">
+            <option value="9600" selected>9600</option>
+            <option value="115200">115200</option>
+            <option value="4800">4800</option>
+            <option value="19200">19200</option>
+            <option value="38400">38400</option>
+            <option value="57600">57600</option>
+        </select>
+
+        <button id="connectBtn">Bağlan</button>
+        <button id="disconnectBtn" disabled>Bağlantıyı Kes</button>
+        <span id="status" style="font-weight: bold; color: gray;">Durum: Bağlı Değil</span>
+    </div>
+
+    <div class="terminal-container">
+        <div id="output"></div>
+        <button id="clearBtn">Ekranı Temizle</button>
+    </div>
+
+    <div class="send-box">
+        <input type="text" id="inputText" placeholder="Arduino'ya gönderilecek mesajı yazın..." disabled>
+        <button id="sendBtn" disabled>Gönder</button>
+    </div>
+
+    <script>
+        let port;
+        let reader;
+        let inputWriter;
+        let keepReading = true;
+
+        const connectBtn = document.getElementById('connectBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const baudrateSelect = document.getElementById('baudrate');
+        const statusSpan = document.getElementById('status');
+        const outputDiv = document.getElementById('output');
+        const inputText = document.getElementById('inputText');
+        const sendBtn = document.getElementById('sendBtn');
+        const clearBtn = document.getElementById('clearBtn');
+
+        // Tarayıcı desteği kontrolü
+        if (!('serial' in navigator)) {
+            alert('Tarayıcınız Web Serial API desteklemiyor. Lütfen güncel Chrome, Edge veya Opera kullanın.');
+            connectBtn.disabled = true;
+        }
+
+        // Seri Porttan Veri Okuma Döngüsü
+        async function readFromPort() {
+            const textDecoder = new TextDecoderStream();
+            const readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
+            reader = textDecoder.readable.getReader();
+
+            try {
+                while (keepReading) {
+                    const { value, done } = await reader.read();
+                    if (done) {
+                        break;
+                    }
+                    if (value) {
+                        outputDiv.textContent += value;
+                        // Otomatik aşağı kaydırma
+                        outputDiv.scrollTop = outputDiv.scrollHeight;
+                    }
+                }
+            } catch (error) {
+                console.error('Okuma hatası:', error);
+            } finally {
+                reader.releaseLock();
+                await readableStreamClosed.catch(() => {});
+            }
+        }
+
+        // Bağlan Butonu
+        connectBtn.addEventListener('click', async () => {
+            try {
+                // Kullanıcıdan port seçmesini iste
+                port = await navigator.serial.requestPort();
+                const baudRate = parseInt(baudrateSelect.value);
+                
+                // Portu aç
+                await port.open({ baudRate: baudRate });
+                
+                // Arayüzü güncelle
+                statusSpan.textContent = "Durum: Bağlandı";
+                statusSpan.style.color = "green";
+                connectBtn.disabled = true;
+                baudrateSelect.disabled = true;
+                disconnectBtn.disabled = false;
+                inputText.disabled = false;
+                sendBtn.disabled = false;
+
+                // Okuma işlemini başlat
+                keepReading = true;
+                readFromPort();
+
+            } catch (error) {
+                console.error('Bağlantı hatası:', error);
+                alert('Porta bağlanılamadı: ' + error.message);
+            }
+        });
+
+        // Bağlantıyı Kes Butonu
+        disconnectBtn.addEventListener('click', async () => {
+            if (port) {
+                keepReading = false;
+                if (reader) {
+                    await reader.cancel();
+                }
+                
+                await port.close();
+                
+                // Arayüzü sıfırla
+                statusSpan.textContent = "Durum: Bağlantı Kesildi";
+                statusSpan.style.color = "red";
+                connectBtn.disabled = false;
+                baudrateSelect.disabled = false;
+                disconnectBtn.disabled = true;
+                inputText.disabled = true;
+                sendBtn.disabled = true;
+            }
+        });
+
+        // Veri Gönderme Fonksiyonu
+        async function sendData() {
+            const text = inputText.value;
+            if (!text || !port) return;
+
+            const encoder = new TextEncoder();
+            const writer = port.writable.getWriter();
+            
+            // Mesajın sonuna Arduino'nun okuyabilmesi için Yeni Satır (\n) ekliyoruz
+            await writer.write(encoder.encode(text + '\n'));
+            writer.releaseLock();
+            
+            inputText.value = '';
+        }
+
+        sendBtn.addEventListener('click', sendData);
+        
+        // Enter tuşu ile gönderim desteği
+        inputText.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendData();
+        });
+
+        // Ekranı Temizle
+        clearBtn.addEventListener('click', () => {
+            outputDiv.textContent = '';
+        });
+    </script>
+</body>
+</html>
